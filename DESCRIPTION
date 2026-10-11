@@ -1,0 +1,18 @@
+Package: tp53TcgaRepro
+Type: Project
+Title: Reproduction of selected TP53 TCGA figures
+Version: 0.1.0
+Description: Minimal data acquisition, explicit TCGA group labels, and plotting workflow.
+Depends: R (>= 4.3)
+Imports:
+    TCGAbiolinks,
+    SummarizedExperiment,
+    DESeq2,
+    fgsea,
+    ggplot2,
+    EnhancedVolcano,
+    stringr,
+    survival,
+    dplyr,
+    tibble,
+    tidyr

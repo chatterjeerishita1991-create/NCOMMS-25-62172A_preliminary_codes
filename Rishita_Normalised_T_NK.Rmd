@@ -1,0 +1,1150 @@
+---
+title: "Subset_T_NK"
+output: html_document
+date: "2025-05-28"
+---
+
+```{r}
+#| label: loading packages
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+library(flowCore)
+library(data.table)
+#library(flowStats)
+library(tidyverse)
+library(zlibbioc)
+library(viridis)
+library(gridExtra) 
+library(pheatmap)
+library(scales)
+library(RColorBrewer) #glasbey only has 42 colours
+library(Rphenograph)
+library(pals)
+#library(PeacoQC)
+library(ggplot2)
+library(colorspace)
+library(Rtsne)
+library(phateR)
+library(uwot)
+library(patchwork)
+library(wesanderson) #colour pallette with more colours
+library(khroma) #colour pallette with more colours
+library(FastPG)
+library(Spectre) #somehow required for running the "do.aggregate()" function for heatmap
+library(ggsignif) #to do stats on boxplots
+library(ggpubr)#to do stats on boxplots
+library(readxl)
+library(writexl)
+library(randomcoloR)
+#library(cytoMEM)
+library(rstatix)
+
+
+#for stats like Tukey
+#library(dplyr)
+#library(ggplot2)
+#library(multcomp)
+#library(tidyr)
+
+
+```
+
+```{r}
+#| label: Set working directory
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+#Find current working directory:
+getwd()
+
+#Set working directory:
+setwd("/nemo/lab/downwardj/home/users/mukhers/Rishita")
+
+# create a short variable with the file path to input files etc.
+input_path = "/nemo/lab/downwardj/home/users/mukhers/Rishita/live_CD45"
+
+# create a short variable with the file path we can use to save plots 
+save_path_plots = "/nemo/lab/downwardj/home/users/mukhers/Rishita/live_CD45/plots/"
+
+# create a short variable with the file path we can use to save plots 
+save_path_tables = "/nemo/lab/downwardj/home/users/mukhers/Rishita/live_CD45/tables/"
+
+```
+
+```{r}
+#| label: Generate a colour palette with sufficient colours,5
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+#generate a colour palette with n(clusters) distinct colours
+palette_5 <- distinctColorPalette(5)
+print(palette_5)
+
+#visualise the 5 distinct colours
+barplot(rep(1, 5), col = palette_5, border = NA, main = "5 Distinct Colours")
+
+# Modify the colour vector where 2 colours look too similar
+orig_pallette_5 = c("#724CB1", "#5BE2B1", "#E67B9F",  "#DD8B4A","#750214")
+
+#trying to switch out some similar colours
+enhanced_pallette_5 = c(
+ "#6c0694", "#029e74",  "#E25056", "#750214", "#094001")
+
+barplot(rep(1, 5), col = enhanced_pallette_5, border = NA, main = "5 Distinct Colours")
+
+```
+
+
+```{r}
+#| label: read saved results back into R
+#| message: false
+#| warnings: false
+#| include: true
+#| eval: false
+
+CD8_T_Cells <- fread("CD8.csv")
+CD4_T_Cells <- fread("CD4.csv")
+NK_Cells    <- fread("NK_cells.csv")
+
+```
+
+```{r}
+#| label: Define which columns to use for clustering different cell types
+#| message: false
+#| warnings: false
+#| include: true
+#| eval: false
+
+#check which markers there are, create again so that I don't need to run top of the script
+
+
+
+cluster_cols_CD8 <- c("Ki67","CD44","GITR","CD107a","CD62L","PD1","CD39","CD25","Lag3")
+
+cluster_cols_CD4 <- c("Ki67","CD44","GITR","CD62L","PD1","CD39","Foxp3","Lag3")
+
+cluster_cols_NK<- c("Ki67","CD44","GITR","CD107a","CD62L","CD39")
+
+
+```
+
+
+
+```{r}
+#| label:Umap clustering CD8 
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+
+# Ensure `CD8_T_Cells` is a dataframe
+CD8_T_Cells <- as.data.frame(CD8_T_Cells)
+
+# Check if `cluster_cols_CD8` contains valid column names
+print(cluster_cols_CD8)
+
+# Select the required columns and run UMAP
+selected_data <- dplyr::select(CD8_T_Cells, all_of(cluster_cols_CD8))
+
+umap_data_CD8 <- uwot::umap(
+  selected_data,
+  n_neighbors = 20,
+  n_threads = parallel::detectCores() - 1,
+  n_sgd_threads = parallel::detectCores() - 1,
+  verbose = TRUE,
+  seed = 520
+)
+
+
+#adding the umap columns to main df
+colnames(umap_data_CD8) <- c("UMAP_X_CD8", "UMAP_Y_CD8") #rename the column names accordingly
+
+
+#gluing on the UMAP columns to the expression data:
+CD8_T_Cells[, "UMAP_X_CD8"] <- umap_data_CD8[,1]
+CD8_T_Cells[, "UMAP_Y_CD8"] <- umap_data_CD8[,2]
+
+colnames(CD8_T_Cells) #just to check
+
+#visualising just xy coordinates in UMAP
+umap_data_CD8 %>% 
+  ggplot(aes(UMAP_X_CD8, UMAP_Y_CD8))+
+  geom_hex(bins = 256)+
+  coord_equal()
+
+```
+
+```{r}
+#| label:Umap clustering CD8 with marker expression
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+# Ensure dataframe
+CD8_T_Cells <- as.data.frame(CD8_T_Cells)
+
+# Convert to long format for marker-based UMAP coloring
+CD8_umap_long <- CD8_T_Cells %>%
+  dplyr::select(UMAP_X_CD8, UMAP_Y_CD8, all_of(cluster_cols_CD8)) %>%
+  tidyr::pivot_longer(
+    cols = all_of(cluster_cols_CD8),
+    names_to = "Marker",
+    values_to = "Expression"
+  )
+
+# Faceted UMAP showing expression of each marker
+umap_feature_plot_CD8 <- ggplot(
+  CD8_umap_long,
+  aes(x = UMAP_X_CD8, y = UMAP_Y_CD8, color = Expression)
+) +
+  geom_point(size = 0.3) +
+  scale_color_viridis_c(option = "magma") +
+  coord_equal() +
+  facet_wrap(~ Marker, ncol = 3) +
+  theme_classic() +
+  theme(
+    strip.text = element_text(size = 10),
+    legend.position = "right"
+  ) +
+  labs(
+    title = "CD8 T cell UMAP colored by marker expression",
+    color = "Expression"
+  ) 
+
+# Display plot
+print(umap_feature_plot_CD8)
+
+# Save faceted plot
+ggsave("umap_feature_plot_CD8.pdf", plot = umap_feature_plot_CD8, width = 6, height = 4)
+
+```
+
+```{r}
+#| label: using FastPG::fastCluster for parallel processing for CD8
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+###########
+selected_data_CD8 <- dplyr::select(CD8_T_Cells, all_of(cluster_cols_CD8))  
+d.set_CD8<- as.matrix(selected_data_CD8)
+
+#if K needs to be readjusted, run the following line between runs:
+#exprn$fastCluster <- NULL #deletes existing column before attaching an updated one
+
+#detect number of available threads:
+num_threads = parallel::detectCores()-1
+num_threads
+
+#running the clustering
+set.seed(520)
+
+Clusters_out_CD8 <- FastPG::fastCluster(data = d.set_CD8,
+                               num_threads,
+                               k = 500)
+
+# from Clusters_out, which is a kind of list, take the element called "communities" and add it to our exprn dataframe.
+CD8_T_Cells$fastCluster_CD8 <- Clusters_out_CD8$communities
+
+#how many clusters are there for a given k = n? -> this needs to be <32 to go with the colour pallette in the next code chunk
+number_of_clusters <- max(CD8_T_Cells$fastCluster_CD8)
+number_of_clusters
+
+#CD8
+#write.csv(CD8_T_Cells, file = "CD8_T_Cells_FastPG_final.csv", row.names = FALSE)
+
+```
+
+
+
+```{r}
+#| label: Plotting phenograph data on the previously created UMAP
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+############# CD8 ###############
+number_of_clusters_CD8 <- max(CD8_T_Cells$fastCluster_CD8)
+number_of_clusters_CD8
+
+# Identify clusters with fewer than 200 cells
+cluster_counts <- CD8_T_Cells %>%
+  group_by(fastCluster_CD8) %>%
+  summarise(Cell_Count = n())
+print(cluster_counts)
+# small_clusters_CD8 <- names(cluster_counts[cluster_counts < 2000])
+# Remove small clusters
+#exprn_dt_clean <- exprn_dt %>% filter(!fastCluster %in% small_clusters)
+
+
+#plot
+FastCluster_plot_CD8 <- NULL
+CD8_T_Cells %>% 
+  ggplot(aes(UMAP_X_CD8, UMAP_Y_CD8, fill = as.factor(fastCluster_CD8)))+
+  geom_hex(bins = 265)+
+  labs(fill = "fastCluster_CD8")+
+  theme_bw()+
+  scale_fill_manual(values = enhanced_pallette_5[1:(number_of_clusters_CD8+1)]) -> FastCluster_plot_CD8 #not sure why it only runs when you add a +1
+
+
+############# Plot results and save 
+FastCluster_plot_CD8
+table(CD8_T_Cells$fastCluster_CD8)
+
+ggsave("FastCluster_plot_CD8.pdf", plot = FastCluster_plot_CD8, width = 6, height = 4)
+
+
+cluster_table <- as.data.frame(table(CD8_T_Cells$fastCluster_CD8))
+colnames(cluster_table) <- c("fastCluster_CD8", "Frequency")
+
+write.csv(cluster_table, "FastCluster_table_CD8.csv", row.names = FALSE)
+
+
+```
+
+
+
+```{r}
+#| label: prepare for heatmap
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+CD8 <- NULL
+#summarise expression per phenograph cluster; preparing data for heatmap
+CD8<- CD8_T_Cells %>%
+  group_by(fastCluster_CD8) %>%
+  summarise(across(all_of(cluster_cols_CD8), median, na.rm = TRUE))
+
+
+#later try this code to avoid the warning
+#CD8_T_Cells %>%
+ # group_by(fastCluster_CD8) %>%
+ # summarise(across(all_of(cluster_cols_CD8), \(x) median(x, na.rm = TRUE)))
+
+```
+
+
+
+
+```{r}
+#| label: Make a heatmap and annotate and stats for CD8
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+#plotting a heatmap
+make.pheatmap(
+  dat = CD8,
+  sample.col = "fastCluster_CD8",
+  plot.cols = cluster_cols_CD8,
+  file.name = "pheatmap_CD8_final_color.pdf", #will be saved to set working directory
+  normalise = TRUE
+)
+
+```
+
+
+
+
+
+```{r}
+#| label: uplod back the final box data results incase R crushed 
+#| message: false
+#| warnings: false
+#| include: true
+#| eval: false
+
+# Step 1: Your initial population creation and calculation of percentages remains the same
+
+
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+
+# Step 1: Assign Population_CD8 categories
+CD8_T_Cells_box <- CD8_T_Cells %>%
+  mutate(Population_CD8 = case_when(
+    fastCluster_CD8 == 4 ~ "4",
+    fastCluster_CD8 == 2 ~ "2",
+    fastCluster_CD8 == 3 ~ "3", 
+    fastCluster_CD8 == 1 ~ "1", 
+    fastCluster_CD8 == 0 ~ "0", 
+    TRUE ~ as.character(fastCluster_CD8)  # Default to cluster number if unmatched
+  ))
+
+CD8_T_Cells_box <- CD8_T_Cells_box %>%
+  mutate(Treatment_CellType = interaction(Treatment, Cell_type, sep = "_", lex.order = TRUE))
+
+# Step 2: Calculate population percentages from CD8_T_Cells_box
+population_percentages_CD8 <- CD8_T_Cells_box %>%
+  group_by(Treatment_CellType, Population_CD8, file) %>%
+  summarize(Population_Count = n(), .groups = "drop") %>%
+  group_by(Treatment_CellType, file) %>%
+  mutate(
+    Total_Cells = sum(Population_Count),
+    Percent_Population = (Population_Count / Total_Cells) * 100
+  ) %>%
+  ungroup()
+
+write.csv(population_percentages_CD8, file = "population_percentages_CD8.csv", row.names = FALSE)
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # https://www.rapidtables.com/web/color/RGB_Color.html
+
+#  Set Treatment Colors
+treatment_celltype_colors <- c(
+  "untreated_ID8_R273H" = "#999999",
+  "untreated_ID8_wt"    = "#999999",
+  "untreated_PBMC"      = "#999999",
+  
+  "Ave_ID8_R273H"       = "#8BA6FF",
+  "Ave_ID8_wt"          = "#8BA6FF",
+  "Ave_PBMC"            = "#8BA6FF",
+  
+  "AR37_ID8_R273H"      = "#994c00",
+  "AR37_ID8_wt"         = "#994c00",
+  "AR37_PBMC"           = "#994c00",
+  
+  "Combo_ID8_R273H"     = "#009999",
+  "Combo_ID8_wt"        = "#009999",
+  "Combo_PBMC"          = "#009999"
+)
+
+treatment_order <- c(
+  "untreated_PBMC", "Ave_PBMC", "AR37_PBMC", "Combo_PBMC",
+  "untreated_ID8_wt", "Ave_ID8_wt", "AR37_ID8_wt", "Combo_ID8_wt",
+  "untreated_ID8_R273H", "Ave_ID8_R273H", "AR37_ID8_R273H", "Combo_ID8_R273H"
+)
+
+
+# 1. Define populations
+populations <- unique(population_percentages_CD8$Population_CD8)
+
+# 2. Run ANOVA + Tukey HSD for each population, save results
+tukey_results_list <- list()
+
+for (pop in populations) {
+  pop_data <- population_percentages_CD8 %>% filter(Population_CD8 == pop)
+  
+  if (n_distinct(pop_data$Treatment_CellType) > 1) {
+    aov_model <- aov(Percent_Population ~ Treatment_CellType, data = pop_data)
+    tukey_result <- TukeyHSD(aov_model)
+    
+    tukey_table <- as.data.frame(tukey_result$Treatment_CellType)
+    tukey_table$Comparison <- rownames(tukey_table)
+    tukey_table$Population <- pop
+    
+    tukey_results_list[[pop]] <- tukey_table
+  }
+}
+
+# 3. Combine all Tukey results into one data frame and save to CSV
+tukey_results_all <- bind_rows(tukey_results_list)
+write.csv(tukey_results_all, "TukeyHSD_CD8_results.csv", row.names = FALSE)
+
+# 4. Plot boxplots (no significance annotations)
+all_plots <- list()
+
+for (pop in populations) {
+  pop_data <- population_percentages_CD8 %>%
+    filter(Population_CD8 == pop) %>%
+    mutate(Treatment_CellType = factor(Treatment_CellType, levels = treatment_order))
+  
+  if (length(unique(pop_data$Treatment_CellType)) > 1) {
+    p <- ggplot(pop_data, aes(x = Treatment_CellType, y = Percent_Population, fill = Treatment_CellType)) +
+      geom_boxplot(outlier.size = 1) +
+      geom_jitter(width = 0.2, size = 1.2, alpha = 0.7, color = "black") +
+      labs(title = paste0(pop, " of CD8"), y = "% Population", x = "Treatment & Cell Type") +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none"
+      ) +
+      scale_fill_manual(values = treatment_celltype_colors)
+    
+    all_plots[[pop]] <- p
+  }
+}
+
+
+# 5. Save combined plot to PDF
+combined_plot <- wrap_plots(all_plots, ncol = 2)
+ggsave("boxplots_TreatmentCellType_Population_CD8_final_color.pdf", combined_plot, width = 14, height = 10)
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#from fileterd compariosn 
+#  Define comparisons of interest
+comparisons_of_interest <- c(
+  "untreated_ID8_R273H-AR37_ID8_R273H",
+  "untreated_ID8_wt-AR37_ID8_wt",
+  "untreated_PBMC-AR37_PBMC",
+  "untreated_ID8_R273H-Ave_ID8_R273H",
+  "untreated_ID8_wt-Ave_ID8_wt",
+  "untreated_PBMC-Ave_PBMC",
+  "untreated_ID8_R273H-Combo_ID8_R273H",
+  "untreated_ID8_wt-Combo_ID8_wt",
+  "untreated_PBMC-Combo_PBMC"
+)
+# Subset from the combined Tukey table
+tukey_results_filtered <- tukey_results_all %>%
+  filter(Comparison %in% comparisons_of_interest)
+
+write.csv(tukey_results_filtered, "TukeyHSD_CD8_filtered_results_final.csv", row.names = FALSE)
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # CD8 done
+```
+
+
+
+```{r}
+#| label:Umap clustering CD4
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+
+# Ensure `CD4_T_Cells` is a dataframe
+CD4_T_Cells <- as.data.frame(CD4_T_Cells)
+
+# Check if `cluster_cols_CD4` contains valid column names
+print(cluster_cols_CD4)
+
+# Select the required columns and run UMAP
+selected_data <- dplyr::select(CD4_T_Cells, all_of(cluster_cols_CD4))
+
+umap_data_CD4 <- uwot::umap(
+  selected_data,
+  n_neighbors = 20,
+  n_threads = parallel::detectCores() - 1,
+  n_sgd_threads = parallel::detectCores() - 1,
+  verbose = TRUE,
+  seed = 520
+)
+
+
+#adding the umap columns to main df
+colnames(umap_data_CD4) <- c("UMAP_X_CD4", "UMAP_Y_CD4") #rename the column names accordingly
+
+
+#gluing on the UMAP columns to the expression data:
+CD4_T_Cells[, "UMAP_X_CD4"] <- umap_data_CD4[,1]
+CD4_T_Cells[, "UMAP_Y_CD4"] <- umap_data_CD4[,2]
+
+colnames(CD4_T_Cells) #just to check
+
+#visualising just xy coordinates in UMAP
+umap_data_CD4 %>% 
+  ggplot(aes(UMAP_X_CD4, UMAP_Y_CD4))+
+  geom_hex(bins = 256)+
+  coord_equal()
+
+```
+
+
+
+```{r}
+#| label: using FastPG::fastCluster for parallel processing for CD4
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+###########
+selected_data_CD4 <- dplyr::select(CD4_T_Cells, all_of(cluster_cols_CD4))  
+d.set_CD4<- as.matrix(selected_data_CD4)
+
+#if K needs to be readjusted, run the following line between runs:
+#exprn$fastCluster <- NULL #deletes existing column before attaching an updated one
+
+#detect number of available threads:
+num_threads = parallel::detectCores()-1
+num_threads
+
+#running the clustering
+set.seed(520)
+
+Clusters_out_CD4 <- FastPG::fastCluster(data = d.set_CD4,
+                               num_threads,
+                               k = 500)
+
+# from Clusters_out, which is a kind of list, take the element called "communities" and add it to our exprn dataframe.
+CD4_T_Cells$fastCluster_CD4 <- Clusters_out_CD4$communities
+
+#how many clusters are there for a given k = n? -> this needs to be <32 to go with the colour pallette in the next code chunk
+number_of_clusters <- max(CD4_T_Cells$fastCluster_CD4)
+number_of_clusters
+
+#CD4
+write.csv(CD4_T_Cells, file = "CD4_T_Cells_FastPG_final.csv", row.names = FALSE)
+
+```
+
+
+
+```{r}
+#| label: Plotting phenograph data on the previously created UMAP
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+############# CD4 ###############
+number_of_clusters_CD4 <- max(CD4_T_Cells$fastCluster_CD4)
+number_of_clusters_CD4
+
+# Identify clusters with fewer than 200 cells
+cluster_counts <- CD4_T_Cells %>%
+  group_by(fastCluster_CD4) %>%
+  summarise(Cell_Count = n())
+print(cluster_counts)
+
+#plot
+CD4_T_Cells %>% 
+  ggplot(aes(UMAP_X_CD4, UMAP_Y_CD4, fill = as.factor(fastCluster_CD4)))+
+  geom_hex(bins = 265)+
+  labs(fill = "fastCluster_CD4")+
+  theme_bw()+
+  scale_fill_manual(values = enhanced_pallette_43[1:(number_of_clusters_CD4+1)]) -> FastCluster_plot_CD4 #not sure why it only runs when you add a +1
+
+
+############# Plot results and save 
+FastCluster_plot_CD4
+table(CD4_T_Cells$fastCluster_CD4)
+
+ggsave("FastCluster_plot_CD4_final.pdf", plot = FastCluster_plot_CD4, width = 6, height = 4)
+
+
+cluster_table <- as.data.frame(table(CD4_T_Cells$fastCluster_CD4))
+colnames(cluster_table) <- c("fastCluster_CD4", "Frequency")
+
+write.csv(cluster_table, "FastCluster_table_CD4_final.csv", row.names = FALSE)
+
+
+
+```
+
+
+
+```{r}
+#| label: prepare for heatmap
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+CD4 <- NULL
+#summarise expression per phenograph cluster; preparing data for heatmap
+CD4<- CD4_T_Cells %>%
+  group_by(fastCluster_CD4) %>%
+  summarise(across(all_of(cluster_cols_CD4), median, na.rm = TRUE))
+
+```
+
+
+
+
+```{r}
+#| label: Make a heatmap and annotate and stats for CD4
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+#plotting a heatmap
+make.pheatmap(
+  dat = CD4,
+  sample.col = "fastCluster_CD4",
+  plot.cols = cluster_cols_CD4,
+  file.name = "pheatmap_CD4_final.pdf", #will be saved to set working directory
+  normalise = TRUE
+)
+
+```
+
+
+
+```{r}
+#| label: uplod back the final box data results incase R crushed 
+#| message: false
+#| warnings: false
+#| include: true
+#| eval: false
+
+# Step 1: Your initial population creation and calculation of percentages remains the same
+
+
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+
+# Step 1: Assign Population_CD8 categories
+CD4_T_Cells_box <- CD4_T_Cells %>%
+  mutate(Population_CD4 = case_when(
+    fastCluster_CD4 == 4 ~ "4",
+    fastCluster_CD4 == 2 ~ "2",
+    fastCluster_CD4 == 3 ~ "3", 
+    fastCluster_CD4 == 5 ~ "5",
+    fastCluster_CD4 == 1 ~ "1", 
+    fastCluster_CD4 == 0 ~ "0", 
+    TRUE ~ as.character(fastCluster_CD4)  # Default to cluster number if unmatched
+  ))
+
+CD4_T_Cells_box <- CD4_T_Cells_box %>%
+  mutate(Treatment_CellType = interaction(Treatment, Cell_type, sep = "_", lex.order = TRUE))
+
+# Step 2: Calculate population percentages from CD4_T_Cells_box
+population_percentages_CD4 <- CD4_T_Cells_box %>%
+  group_by(Treatment_CellType, Population_CD4, file) %>%
+  summarize(Population_Count = n(), .groups = "drop") %>%
+  group_by(Treatment_CellType, file) %>%
+  mutate(
+    Total_Cells = sum(Population_Count),
+    Percent_Population = (Population_Count / Total_Cells) * 100
+  ) %>%
+  ungroup()
+
+write.csv(population_percentages_CD4, file = "population_percentages_CD4_final.csv", row.names = FALSE)
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
+#  Set Treatment Colors
+treatment_celltype_colors <- c(
+  "untreated_ID8_R273H" = "#999999",
+  "untreated_ID8_wt"    = "#bfbfbf",
+  "untreated_PBMC"      = "#e0e0e0",
+  
+  "Ave_ID8_R273H"       = "#fdae61",
+  "Ave_ID8_wt"          = "#fdc996",
+  "Ave_PBMC"            = "#fee6c9",
+  
+  "AR37_ID8_R273H"      = "#abd9e9",
+  "AR37_ID8_wt"         = "#cde5f0",
+  "AR37_PBMC"           = "#e8f2f8",
+  
+  "Combo_ID8_R273H"     = "#2c7bb6",
+  "Combo_ID8_wt"        = "#589cc6",
+  "Combo_PBMC"          = "#a3cce2"
+)
+
+
+treatment_order <- c(
+  "untreated_PBMC", "Ave_PBMC", "AR37_PBMC", "Combo_PBMC",
+  "untreated_ID8_wt", "Ave_ID8_wt", "AR37_ID8_wt", "Combo_ID8_wt",
+  "untreated_ID8_R273H", "Ave_ID8_R273H", "AR37_ID8_R273H", "Combo_ID8_R273H"
+)
+# 1. Define populations
+populations <- unique(population_percentages_CD4$Population_CD4)
+
+# 2. Run ANOVA + Tukey HSD for each population, save results
+tukey_results_list <- list()
+
+for (pop in populations) {
+  pop_data <- population_percentages_CD4 %>% filter(Population_CD4 == pop)
+  
+  if (n_distinct(pop_data$Treatment_CellType) > 1) {
+    aov_model <- aov(Percent_Population ~ Treatment_CellType, data = pop_data)
+    tukey_result <- TukeyHSD(aov_model)
+    
+    tukey_table <- as.data.frame(tukey_result$Treatment_CellType)
+    tukey_table$Comparison <- rownames(tukey_table)
+    tukey_table$Population <- pop
+    
+    tukey_results_list[[pop]] <- tukey_table
+  }
+}
+
+# 3. Combine all Tukey results into one data frame and save to CSV
+tukey_results_all <- bind_rows(tukey_results_list)
+write.csv(tukey_results_all, "TukeyHSD_CD4_results_final.csv", row.names = FALSE)
+
+# 4. Plot boxplots (no significance annotations)
+all_plots <- list()
+
+for (pop in populations) {
+  pop_data <- population_percentages_CD4 %>% filter(Population_CD4 == pop)
+  
+  if (length(unique(pop_data$Treatment_CellType)) > 1) {
+    p <- ggplot(pop_data, aes(x = Treatment_CellType, y = Percent_Population, fill = Treatment_CellType)) +
+      geom_boxplot(outlier.size = 1) +
+      geom_jitter(width = 0.2, size = 1.2, alpha = 0.7, color = "black") +
+      labs(title = paste0(pop, " of CD4"), y = "% Population", x = "Treatment & Cell Type") +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none"
+      ) +
+      scale_fill_manual(values = treatment_celltype_colors)
+    
+    all_plots[[pop]] <- p
+  }
+}
+
+# 5. Save combined plot to PDF
+combined_plot_CD4 <- wrap_plots(all_plots, ncol = 2)
+ggsave("boxplots_TreatmentCellType_Population_CD4_final.pdf", combined_plot_CD4, width = 14, height = 10)
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#from fileterd compariosn 
+#  Define comparisons of interest
+comparisons_of_interest <- c(
+  "untreated_ID8_R273H-AR37_ID8_R273H",
+  "untreated_ID8_wt-AR37_ID8_wt",
+  "untreated_PBMC-AR37_PBMC",
+  "untreated_ID8_R273H-Ave_ID8_R273H",
+  "untreated_ID8_wt-Ave_ID8_wt",
+  "untreated_PBMC-Ave_PBMC",
+  "untreated_ID8_R273H-Combo_ID8_R273H",
+  "untreated_ID8_wt-Combo_ID8_wt",
+  "untreated_PBMC-Combo_PBMC"
+)
+# Subset from the combined Tukey table
+tukey_results_filtered_CD4 <- tukey_results_all %>%
+  filter(Comparison %in% comparisons_of_interest)
+
+write.csv(tukey_results_filtered_CD4, "TukeyHSD_CD4_filtered_results_final.csv", row.names = FALSE)
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # CD4 done
+```
+
+```{r}
+#| label:Umap clustering NK_Cells
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+
+# Ensure `NK_Cells` is a dataframe
+NK_Cells <- as.data.frame(NK_Cells)
+
+# Check if `cluster_cols_NK` contains valid column names
+print(cluster_cols_NK)
+
+# Select the required columns and run UMAP
+selected_data <- dplyr::select(NK_Cells, all_of(cluster_cols_NK))
+
+umap_data_NK <- uwot::umap(
+  selected_data,
+  n_neighbors = 20,
+  n_threads = parallel::detectCores() - 1,
+  n_sgd_threads = parallel::detectCores() - 1,
+  verbose = TRUE,
+  seed = 520
+)
+
+
+#adding the umap columns to main df
+colnames(umap_data_NK) <- c("UMAP_X_NK", "UMAP_Y_NK") #rename the column names accordingly
+
+
+#gluing on the UMAP columns to the expression data:
+NK_Cells[, "UMAP_X_NK"] <- umap_data_NK[,1]
+NK_Cells[, "UMAP_Y_NK"] <- umap_data_NK[,2]
+
+colnames(NK_Cells) #just to check
+
+#visualising just xy coordinates in UMAP
+umap_data_NK %>% 
+  ggplot(aes(UMAP_X_NK, UMAP_Y_NK))+
+  geom_hex(bins = 256)+
+  coord_equal()
+
+```
+
+
+
+```{r}
+#| label: using FastPG::fastCluster for parallel processing for NK
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+###########
+selected_data_NK <- dplyr::select(NK_Cells, all_of(cluster_cols_NK))  
+d.set_NK<- as.matrix(selected_data_NK)
+
+#if K needs to be readjusted, run the following line between runs:
+#exprn$fastCluster <- NULL #deletes existing column before attaching an updated one
+
+#detect number of available threads:
+num_threads = parallel::detectCores()-1
+num_threads
+
+#running the clustering
+set.seed(520)
+
+Clusters_out_NK <- FastPG::fastCluster(data = d.set_NK,
+                               num_threads,
+                               k = 500)
+
+# from Clusters_out, which is a kind of list, take the element called "communities" and add it to our exprn dataframe.
+NK_Cells$fastCluster_NK <- Clusters_out_NK$communities
+
+#how many clusters are there for a given k = n? -> this needs to be <32 to go with the colour pallette in the next code chunk
+number_of_clusters <- max(NK_Cells$fastCluster_NK)
+number_of_clusters
+
+#NK
+write.csv(NK_Cells, file = "NK_Cells_FastPG_Final.csv", row.names = FALSE)
+
+```
+
+
+
+```{r}
+#| label: Plotting phenograph data on the previously created UMAP
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+############# NK ###############
+number_of_clusters_NK <- max(NK_Cells$fastCluster_NK)
+number_of_clusters_NK
+
+# Identify clusters with fewer than 200 cells
+cluster_counts <-NK_Cells %>%
+  group_by(fastCluster_NK) %>%
+  summarise(Cell_Count = n())
+print(cluster_counts)
+
+
+#plot
+NK_Cells %>% 
+  ggplot(aes(UMAP_X_NK, UMAP_Y_NK, fill = as.factor(fastCluster_NK)))+
+  geom_hex(bins = 265)+
+  labs(fill = "fastCluster_NK")+
+  theme_bw()+
+  scale_fill_manual(values = enhanced_pallette_43[1:(number_of_clusters_NK+1)]) -> FastCluster_plot_NK #not sure why it only runs when you add a +1
+
+
+############# Plot results and save 
+FastCluster_plot_NK
+table(NK_Cells$fastCluster_NK)
+
+ggsave("FastCluster_plot_NK_final.pdf", plot = FastCluster_plot_NK, width = 6, height = 4)
+
+
+cluster_table <- as.data.frame(table(NK_Cells$fastCluster_NK))
+colnames(cluster_table) <- c("fastCluster_NK", "Frequency")
+
+write.csv(cluster_table, "FastCluster_table_NK_final.csv", row.names = FALSE)
+
+
+
+```
+
+
+
+```{r}
+#| label: prepare for heatmap
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+NK <- NULL
+#summarise expression per phenograph cluster; preparing data for heatmap
+NK<- NK_Cells %>%
+  group_by(fastCluster_NK) %>%
+  summarise(across(all_of(cluster_cols_NK), median, na.rm = TRUE))
+
+```
+
+
+
+
+```{r}
+#| label: Make a heatmap and annotate and stats for NK
+#| message: false
+#| warnings: false
+#| include: true
+#| echo: false
+
+
+#plotting a heatmap
+make.pheatmap(
+  dat = NK,
+  sample.col = "fastCluster_NK",
+  plot.cols = cluster_cols_NK,
+  file.name = "pheatmap_NK_final.pdf", #will be saved to set working directory
+  normalise = TRUE
+)
+
+```
+
+
+
+```{r}
+#| label: uplod back the final box data results incase R crushed 
+#| message: false
+#| warnings: false
+#| include: true
+#| eval: false
+
+# Step 1: Your initial population creation and calculation of percentages remains the same
+
+
+# Load required libraries
+library(dplyr)
+library(ggplot2)
+library(ggpubr)
+library(patchwork)
+
+# Step 1: Assign Population_NK categories
+NK_Cells_box <- NK_Cells %>%
+  mutate(Population_NK = case_when(
+    fastCluster_NK == 4 ~ "4",
+    fastCluster_NK == 2 ~ "2",
+    fastCluster_NK == 3 ~ "3", 
+    fastCluster_NK == 5 ~ "5",
+    fastCluster_NK == 1 ~ "1", 
+    fastCluster_NK == 0 ~ "0", 
+    TRUE ~ as.character(fastCluster_NK)  # Default to cluster number if unmatched
+  ))
+
+NK_Cells_box <- NK_Cells_box %>%
+  mutate(Treatment_CellType = interaction(Treatment, Cell_type, sep = "_", lex.order = TRUE))
+
+# Step 2: Calculate population percentages from NK_Cells_box
+population_percentages_NK <- NK_Cells_box %>%
+  group_by(Treatment_CellType, Population_NK, file) %>%
+  summarize(Population_Count = n(), .groups = "drop") %>%
+  group_by(Treatment_CellType, file) %>%
+  mutate(
+    Total_Cells = sum(Population_Count),
+    Percent_Population = (Population_Count / Total_Cells) * 100
+  ) %>%
+  ungroup()
+
+write.csv(population_percentages_NK, file = "population_percentages_NK_final.csv", row.names = FALSE)
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+
+#  Set Treatment Colors
+treatment_celltype_colors <- c(
+  "untreated_ID8_R273H" = "#999999",
+  "untreated_ID8_wt"    = "#bfbfbf",
+  "untreated_PBMC"      = "#e0e0e0",
+  
+  "Ave_ID8_R273H"       = "#fdae61",
+  "Ave_ID8_wt"          = "#fdc996",
+  "Ave_PBMC"            = "#fee6c9",
+  
+  "AR37_ID8_R273H"      = "#abd9e9",
+  "AR37_ID8_wt"         = "#cde5f0",
+  "AR37_PBMC"           = "#e8f2f8",
+  
+  "Combo_ID8_R273H"     = "#2c7bb6",
+  "Combo_ID8_wt"        = "#589cc6",
+  "Combo_PBMC"          = "#a3cce2"
+)
+
+treatment_order <- c(
+  "untreated_PBMC", "Ave_PBMC", "AR37_PBMC", "Combo_PBMC",
+  "untreated_ID8_wt", "Ave_ID8_wt", "AR37_ID8_wt", "Combo_ID8_wt",
+  "untreated_ID8_R273H", "Ave_ID8_R273H", "AR37_ID8_R273H", "Combo_ID8_R273H"
+)
+
+# 1. Define populations
+populations <- unique(population_percentages_NK$Population_NK)
+
+tukey_results_list <- list()
+
+for (pop in populations) {
+  pop_data <- population_percentages_NK %>% filter(Population_NK == pop)
+  
+  if (n_distinct(pop_data$Treatment_CellType) > 1) {
+    aov_model <- aov(Percent_Population ~ Treatment_CellType, data = pop_data)
+    tukey_result <- TukeyHSD(aov_model)
+    
+    tukey_table <- as.data.frame(tukey_result$Treatment_CellType)
+    tukey_table$Comparison <- rownames(tukey_table)
+    tukey_table$Population <- pop
+    
+    tukey_results_list[[pop]] <- tukey_table
+  }
+}
+
+# 3. Combine all Tukey results into one data frame and save to CSV
+tukey_results_NK <- bind_rows(tukey_results_list)
+write.csv(tukey_results_NK, "TukeyHSD_NK_results_final.csv", row.names = FALSE)
+
+# 4. Plot boxplots (no significance annotations)
+all_plots <- list()
+
+for (pop in populations) {
+  pop_data <- population_percentages_NK %>% filter(Population_NK == pop)
+  
+  if (length(unique(pop_data$Treatment_CellType)) > 1) {
+    q <- ggplot(pop_data, aes(x = Treatment_CellType, y = Percent_Population, fill = Treatment_CellType)) +
+      geom_boxplot(outlier.size = 1) +
+      geom_jitter(width = 0.2, size = 1.2, alpha = 0.7, color = "black") +
+      labs(title = paste0(pop, " of NK"), y = "% Population", x = "Treatment & Cell Type") +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none"
+      ) +
+      scale_fill_manual(values = treatment_celltype_colors)
+    
+    all_plots[[pop]] <- q
+  }
+}
+
+# 5. Save combined plot to PDF
+combined_plot_NK <- wrap_plots(all_plots, ncol = 2)
+ggsave("boxplots_TreatmentCellType_Population_NK_final.pdf", combined_plot_NK, width = 14, height = 10)
+
+
+
+
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # 
+#from fileterd compariosn 
+#  Define comparisons of interest
+comparisons_of_interest <- c(
+  "untreated_ID8_R273H-AR37_ID8_R273H",
+  "untreated_ID8_wt-AR37_ID8_wt",
+  "untreated_PBMC-AR37_PBMC",
+  "untreated_ID8_R273H-Ave_ID8_R273H",
+  "untreated_ID8_wt-Ave_ID8_wt",
+  "untreated_PBMC-Ave_PBMC",
+  "untreated_ID8_R273H-Combo_ID8_R273H",
+  "untreated_ID8_wt-Combo_ID8_wt",
+  "untreated_PBMC-Combo_PBMC"
+)
+# Subset from the combined Tukey table
+tukey_results_filtered_NK <- tukey_results_all %>%
+  filter(Comparison %in% comparisons_of_interest)
+
+write.csv(tukey_results_filtered, "TukeyHSD_NK_filtered_results_final.csv", row.names = FALSE)
+# # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # CD4 done
+```

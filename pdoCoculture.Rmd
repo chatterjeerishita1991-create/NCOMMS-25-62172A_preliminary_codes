@@ -1,0 +1,351 @@
+---
+title: "PDO co-culture"
+author: "An Truong"
+date: "2024-12-19"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(readxl)
+```
+
+#Rishita
+```{r}
+h0 <- read.csv("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/20241216_PDO-PBMC_0H_MaskedNuclei.csv")
+
+h72 <- read.csv("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/20241216_PDO-PBMC_72H_FilteredNuclei.csv")
+
+h72.mono <- read.csv("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/20241216_PDO-PBMC_ONLY_72H_FilteredNuclei.csv")
+
+metadata <- read_excel("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/metadata.xlsx")
+```
+
+```{r}
+h0 = h0 %>% mutate(normCaspase = Intensity_IntegratedIntensity_Caspase/Intensity_IntegratedIntensity_Hoechst,
+                   normCellTrace = Intensity_IntegratedIntensity_CellTrace/Intensity_IntegratedIntensity_Hoechst)
+h0.sum = h0 %>% group_by(Metadata_Well,Metadata_Row,Metadata_Column) %>%
+  reframe(mean.Caspase = mean(normCaspase), 
+          mean.CellTrace = mean(normCellTrace)) %>% 
+  mutate(plate = 1)
+
+h0.sum = h0.sum %>% left_join(metadata)
+
+
+h72 = h72 %>%mutate(normCaspase = Intensity_IntegratedIntensity_Caspase/Intensity_IntegratedIntensity_Hoechst,
+                   normCellTrace = Intensity_IntegratedIntensity_CellTrace/Intensity_IntegratedIntensity_Hoechst)
+h72.sum = h72 %>% group_by(Metadata_Well,Metadata_Row,Metadata_Column) %>%
+  reframe(mean.Caspase = mean(normCaspase), 
+          mean.CellTrace = mean(normCellTrace)) %>% 
+  mutate(plate = 1)
+
+h72.sum = h72.sum %>% left_join(metadata)
+
+
+h72.mono = h72.mono %>%mutate(normCaspase = Intensity_IntegratedIntensity_Caspase/Intensity_IntegratedIntensity_Hoechst,
+                   normCellTrace = Intensity_IntegratedIntensity_CellTrace/Intensity_IntegratedIntensity_Hoechst)
+h72.mono.sum = h72.mono %>% group_by(Metadata_Well,Metadata_Row,Metadata_Column) %>%
+  reframe(mean.Caspase = mean(normCaspase), 
+          mean.CellTrace = mean(normCellTrace)) %>% 
+  mutate(plate = 2)
+h72.mono.sum = h72.mono.sum %>% left_join(metadata)
+
+
+```
+
+```{r}
+ggplot(h0.sum, aes(x=as.factor(Metadata_Column), y=Metadata_Row, fill = mean.Caspase)) +
+  geom_raster() + scale_y_reverse() +
+  geom_text(aes(label = signif(mean.Caspase,2)), color = "black", size = 3) #+ 
+  facet_grid(~org)
+  
+ggplot(h72.sum, aes(x=as.factor(Metadata_Column), y=Metadata_Row, fill = mean.Caspase)) +
+  geom_raster() + scale_y_reverse() +
+  geom_text(aes(label = signif(mean.Caspase,2)), color = "black", size = 3) #+ 
+
+  facet_grid(~org)
+  
+ggplot(h72.mono.sum, aes(x=as.factor(Metadata_Column), y=Metadata_Row, fill = mean.Caspase)) +
+  geom_raster() + scale_y_reverse() +
+  geom_text(aes(label = signif(mean.Caspase,2)), color = "black", size = 3) #+ 
+  facet_grid(~org)  
+  
+```
+```{r}
+#h72.sum = h72.sum %>% left_join(h0.sum %>% rename(mean.Caspase0=mean.Caspase) %>% select(Metadata_Well,plate,mean.Caspase0))
+
+h72.sum = h72.sum %>% #mutate(fc.Caspase = mean.Caspase/mean.Caspase0) %>%
+  mutate(treatment = factor(treatment, levels=c("untreated","Avelumab","AR37","Ave + AR37","BISAA")))
+
+h72.sum.ut = h72.sum %>% filter(treatment =="untreated") %>% group_by(org) %>% reframe(mean.Caspase.ut = mean(mean.Caspase))#, mean.fc.ut = mean(fc.Caspase))
+
+h72.sum = h72.sum %>% left_join(h72.sum.ut) %>% 
+  mutate(fc.mean.Caspase = mean.Caspase/mean.Caspase.ut)
+#         fc.fc.Caspase = fc.Caspase/mean.fc.ut)
+
+
+
+h72.mono.sum = h72.mono.sum %>% 
+  mutate(treatment = factor(treatment, levels=c("untreated","Avelumab","AR37","Ave + AR37","BISAA")))
+
+h72.mono.sum.ut = h72.mono.sum %>% filter(treatment =="untreated") %>% group_by(org,culture) %>% reframe(mean.Caspase.ut = mean(mean.Caspase))
+
+h72.mono.sum = h72.mono.sum %>% left_join(h72.mono.sum.ut) %>% 
+  mutate(fc.mean.Caspase = mean.Caspase/mean.Caspase.ut)
+
+
+h72.sum2 = h72.sum %>% full_join(h72.mono.sum)
+```
+
+mAvelumab #2966b1
+AR37 #b28b5d
+AR37+mAve : #36b565
+BISAA #941550
+
+```{r, fig.width=8, fig.height =3}
+ggplot(h72.sum, 
+       aes(x = treatment, y = fc.Caspase)) +
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.8), width = 0.7) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.8), width = 0.2) +
+  facet_grid(~org) +
+  #scale_fill_manual(values = c("grey","#7274a3")) + 
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1))+
+  #coord_cartesian(ylim=c(4, 8.5)) + 
+  ylab("fold change normalised mean Caspase") + xlab("")
+
+png("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_imaging_co.png",height = 3.2, width =8,units="in",res=1200)
+#svg("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_imaging_co.svg",height = 3.2, width =8)
+ggplot(h72.sum, 
+       aes(x = treatment, y = fc.mean.Caspase, fill = treatment)) +
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.8), width = 0.7) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.8), width = 0.2) +
+  facet_grid(culture~org) +
+  scale_fill_manual(values = c("grey50","#2966b1","#b28b5d","#36b565","#941550")) + 
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1))+
+  coord_cartesian(ylim=c(0.5, 1.75)) + 
+  ggtitle("Fluorescent Imaging") +
+  ylab("fold change normalised mean \nCellEvent Caspase-3/7 intensity\n") + xlab("")
+dev.off()
+```
+
+```{r,fig.height=5,fig.width=8}
+png("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_imaging_all.png",height = 5, width =8,units="in",res=1200)
+#svg("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_imaging_all.svg",height = 5, width =8)
+ggplot(h72.sum2%>%filter(org!="PBMC"), 
+       aes(x = treatment, y = fc.mean.Caspase, fill = treatment)) +
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.8), width = 0.7) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.8), width = 0.2) +
+  facet_grid(culture~org) +
+  scale_fill_manual(values = c("grey50","#2966b1","#b28b5d","#36b565","#941550")) + 
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1))+
+  coord_cartesian(ylim=c(0.5, 1.75)) + 
+  ggtitle("Fluorescent Imaging") + 
+  ylab("fold change normalised \nmean CellEvent Caspase-3/7 intensity\n") + xlab("")
+dev.off()
+```
+
+## stats
+```{r}
+library(multcomp)
+# Run ANOVA for each PDO
+anova_results <- h72.sum2 %>%filter(org!="PBMC")%>%
+  group_by(org,culture) %>%
+  summarise(
+    aov_model = list(aov(fc.mean.Caspase ~ treatment, data = cur_data()))
+  )
+
+# Extract ANOVA summaries
+anova_summaries <- anova_results %>%
+  mutate(summary = map(aov_model, summary))
+
+# Post-hoc Tukey's HSD test
+posthoc_results <- anova_results %>%
+  mutate(posthoc = map(aov_model, ~ TukeyHSD(.x)))
+
+# Print ANOVA and post-hoc results for a specific PDO
+anova_summaries$summary[[1]]# Summary for the first PDO
+posthoc_results$posthoc[[1]]
+posthoc_results$posthoc[[2]]
+posthoc_results$posthoc[[3]]# Post-hoc results for the first PDO
+```
+
+```{r}
+write_xlsx(list(`PDO1-co`=data.frame(Comparison = rownames(posthoc_results$posthoc[[1]][[1]]),
+                                     posthoc_results$posthoc[[1]][[1]]),
+                `PDO1-mono`=data.frame(Comparison = rownames(posthoc_results$posthoc[[2]][[1]]),
+                                       posthoc_results$posthoc[[2]][[1]]),
+                `PDO5-co`=data.frame(Comparison = rownames(posthoc_results$posthoc[[3]][[1]]),
+                                     posthoc_results$posthoc[[3]][[1]]),
+                `PDO5-mono`=data.frame(Comparison = rownames(posthoc_results$posthoc[[4]][[1]]),
+                                       posthoc_results$posthoc[[4]][[1]]),
+                `PDO6-co`=data.frame(Comparison = rownames(posthoc_results$posthoc[[5]][[1]]),
+                                     posthoc_results$posthoc[[5]][[1]]),
+                `PDO6-mono`=data.frame(Comparison = rownames(posthoc_results$posthoc[[6]][[1]]),
+                                       posthoc_results$posthoc[[6]][[1]])),
+           path = "RC_imaging_anova_posthoc.xlsx")
+```
+
+
+##flow
+```{r}
+Flow_PDO.PBMC_Intensity <- read.csv("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/Flow_PDO-PBMC_Intensity.csv")
+for (i in c(6:13)){
+Flow_PDO.PBMC_Intensity[,i] = as.numeric(Flow_PDO.PBMC_Intensity[,i])
+}
+
+Flow_PDO.PBMC_Counts <- read.csv("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/Flow_PDO-PBMC_Counts.csv")
+
+Flow_PDO.PBMC_Counts = Flow_PDO.PBMC_Counts%>% mutate(ratio.cd8.cd4 = cd8/cd4)
+Flow_PDO.PBMC_Counts = Flow_PDO.PBMC_Counts[1:35,] %>% mutate(treatment = factor(treatment, levels=c("untreated","Avelumab","AR37","Ave + AR37","BISAA")))
+
+flow_rc_counts.ut = Flow_PDO.PBMC_Counts%>% filter(treatment=="untreated") %>%
+  group_by(org,culture) %>%
+  reframe(ratio.ut = ratio.cd8.cd4)
+
+Flow_PDO.PBMC_Counts = Flow_PDO.PBMC_Counts %>% left_join(flow_rc_counts.ut) %>%
+  mutate(fc.ratio = ratio.cd8.cd4/ratio.ut)
+```
+
+```{r}
+flow.metadata = tibble(SampleID=c(1:35),sample=Flow_PDO.PBMC_Intensity$sample,
+                       treatment=Flow_PDO.PBMC_Intensity$treatment,
+                       org= Flow_PDO.PBMC_Intensity$org,
+                       culture = Flow_PDO.PBMC_Intensity$culture)
+
+flow_rc_scaled <- read.csv("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/RC_PDO-PBMC_1_Scaled_EpCAM.csv")
+
+flow_rc_scaled = flow_rc_scaled%>%left_join(flow.metadata) 
+
+flow_rc_scaled.ut = flow_rc_scaled %>% filter(treatment =="untreated") %>%
+  group_by(org,culture) %>%
+  reframe(mean.caspase.ut = mean(FITC.A....Caspase))
+
+flow_rc_scaled = flow_rc_scaled %>% left_join(flow_rc_scaled.ut) %>%
+  mutate(norm.caspase = FITC.A....Caspase / mean.caspase.ut) %>%
+  mutate(treatment = factor(treatment, levels=c("untreated","Avelumab","AR37","Ave + AR37","BISAA")))
+
+```
+
+
+```{r,fig.height=5,fig.width=8}
+# 
+# ggplot(Flow_PDO.PBMC_Intensity %>% filter(org!="PBMC"),
+#        aes(x = treatment, y = median.caspase.epcam, fill = treatment)) +
+#   geom_bar(stat = "identity", width = 0.6) + # Barplot
+#   geom_errorbar(aes(ymin = median.caspase.epcam - mad.caspase.epcam, 
+#                     ymax = median.caspase.epcam + mad.caspase.epcam), 
+#                 width = 0.2) +      
+#     facet_grid(culture~org)
+
+# png("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - #Weizmann/04. R analysis/pdoCoculture/barplots_flow_all.png",height = 5, width =8,units="in",res=1200)
+svg("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_flow_all.svg",height = 5, width =8)
+ggplot(flow_rc_scaled%>%filter(org!="PBMC"), 
+       aes(x = treatment, y = FITC.A....Caspase, fill = treatment)) +
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.8), width = 0.7) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.8), width = 0.2) +
+  facet_grid(culture~org) +
+  scale_fill_manual(values = c("grey50","#2966b1","#b28b5d","#36b565","#941550")) + 
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1))+
+  #coord_cartesian(ylim=c(0.5, 1.75)) + 
+  ggtitle("Flow Cytometry") +
+  ylab("mean CellEvent Caspase-3/7 intensity\n") + xlab("")
+dev.off()
+
+#png("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_flow_all_foldChange.png",height = 5, width =8,units="in",res=1200)
+svg("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_flow_all_foldChange.svg",height = 5, width =8)
+ggplot(flow_rc_scaled%>%filter(org!="PBMC"), 
+       aes(x = treatment, y = norm.caspase, fill = treatment)) +
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.8), width = 0.7) +
+  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.8), width = 0.2) +
+  facet_grid(culture~org) +
+  scale_fill_manual(values = c("grey50","#2966b1","#b28b5d","#36b565","#941550")) + 
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1))+
+  coord_cartesian(ylim=c(0.5, 1.75)) + 
+  ggtitle("Flow Cytometry") +
+  ylab("fold change \nmean CellEvent Caspase-3/7 intensity\n") + xlab("")
+dev.off()
+
+
+```
+
+```{r,fig.width=9,fig.height=3}
+ png("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_flow_all_cd8-cd4-ratio.png",height = 3, width =9,units="in",res=1200)
+#svg("C:/Users/truong01/OneDrive - University of Cambridge/Rishita Chatterjee - Weizmann/04. R analysis/pdoCoculture/barplots_flow_all_cd8-cd4-ratio.svg",height = 3, width =9)
+ggplot(Flow_PDO.PBMC_Counts, 
+       aes(x = treatment, y = ratio.cd8.cd4, fill = treatment)) +
+  stat_summary(fun = mean, geom = "bar", position = position_dodge(width = 0.8), width = 0.7) +
+#  stat_summary(fun.data = mean_se, geom = "errorbar", position = position_dodge(width = 0.8), width = 0.2) +
+  facet_grid(~org) +
+  scale_fill_manual(values = c("grey50","#2966b1","#b28b5d","#36b565","#941550")) + 
+  theme_bw()+
+  theme(legend.position = "none",
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle=45,hjust=1))+
+  #coord_cartesian(ylim=c(0.5, 1.5)) + 
+  ylab("CD8+:CD4+ ratio") + xlab("")
+dev.off()
+```
+
+### stats
+```{r}
+library(multcomp)
+# Run ANOVA for each PDO
+anova_results <- flow_rc_scaled %>%filter(org!="PBMC")%>%
+  group_by(org,culture) %>%
+  summarise(
+    aov_model = list(aov(FITC.A....Caspase ~ treatment, data = cur_data()))
+  )
+
+# Extract ANOVA summaries
+anova_summaries <- anova_results %>%
+  mutate(summary = map(aov_model, summary))
+
+# Post-hoc Tukey's HSD test
+posthoc_results <- anova_results %>%
+  mutate(posthoc = map(aov_model, ~ TukeyHSD(.x)))
+
+# Print ANOVA and post-hoc results for a specific PDO
+anova_summaries$summary[[1]]# Summary for the first PDO
+posthoc_results$posthoc[[1]]
+posthoc_results$posthoc[[2]]
+posthoc_results$posthoc[[3]]# Post-hoc results for the first PDO
+```
+
+```{r}
+write_xlsx(list(`PDO1-co`=data.frame(Comparison = rownames(posthoc_results$posthoc[[1]][[1]]),
+                                     posthoc_results$posthoc[[1]][[1]]),
+                `PDO1-mono`=data.frame(Comparison = rownames(posthoc_results$posthoc[[2]][[1]]),
+                                       posthoc_results$posthoc[[2]][[1]]),
+                `PDO5-co`=data.frame(Comparison = rownames(posthoc_results$posthoc[[3]][[1]]),
+                                     posthoc_results$posthoc[[3]][[1]]),
+                `PDO5-mono`=data.frame(Comparison = rownames(posthoc_results$posthoc[[4]][[1]]),
+                                       posthoc_results$posthoc[[4]][[1]]),
+                `PDO6-co`=data.frame(Comparison = rownames(posthoc_results$posthoc[[5]][[1]]),
+                                     posthoc_results$posthoc[[5]][[1]]),
+                `PDO6-mono`=data.frame(Comparison = rownames(posthoc_results$posthoc[[6]][[1]]),
+                                       posthoc_results$posthoc[[6]][[1]])),
+           path = "RC_flow_anova_posthoc.xlsx")
+```
+
+
+
+
+
+
+
+
